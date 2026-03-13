@@ -1,0 +1,27 @@
+{
+  "_comment": "Add context-mode-nudge.sh to the existing Read matcher in your .claude/settings.json hooks. This example shows the FULL Read hook array — merge with your existing jCodeMunch/jDocMunch hooks.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "_comment": "jCodeMunch hook (from jmunch-claude-code-setup)",
+            "type": "command",
+            "command": "bash .claude/hooks/jcodemunch-nudge.sh"
+          },
+          {
+            "_comment": "jDocMunch hook (from jmunch-claude-code-setup)",
+            "type": "command",
+            "command": "bash .claude/hooks/jdocmunch-nudge.sh"
+          },
+          {
+            "_comment": "context-mode hook (this repo)",
+            "type": "command",
+            "command": "bash .claude/hooks/context-mode-nudge.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
