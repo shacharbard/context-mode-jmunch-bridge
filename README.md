@@ -1,31 +1,31 @@
 # context-mode + jCodeMunch/jDocMunch Bridge for Claude Code
 
-Hook, rules, and integration guide for running [context-mode](https://github.com/mksglu/context-mode) alongside [jCodeMunch](https://github.com/jgravelle/jcodemunch-mcp) and [jDocMunch](https://github.com/jgravelle/jdocmunch-mcp) in Claude Code — three MCP servers that together cover code, docs, and data files with zero conflicts.
+Hooks, rules, and integration guide for running [context-mode](https://github.com/mksglu/context-mode) alongside [jCodeMunch](https://github.com/jgravelle/jcodemunch-mcp) and [jDocMunch](https://github.com/jgravelle/jdocmunch-mcp) in Claude Code — three MCP servers that together cover code, docs, data files, and command outputs with zero conflicts.
 
 > **Credit where it's due:**
 > - [context-mode](https://github.com/mksglu/context-mode) is built and maintained by [mksglu](https://github.com/mksglu). It provides the sandbox execution, FTS5 indexing, and session persistence that make large data files and command outputs manageable.
 > - [jCodeMunch](https://github.com/jgravelle/jcodemunch-mcp) and [jDocMunch](https://github.com/jgravelle/jdocmunch-mcp) are built and maintained by [J. Gravelle (jgravelle)](https://github.com/jgravelle). They provide the AST-level code navigation and section-level doc navigation that save 85-95% of tokens.
 >
-> This repo does not contain any of those MCP servers — it provides a bridge hook and configuration that makes all three work together. All the clever indexing, sandboxing, and symbol extraction is the work of their respective authors.
+> This repo does not contain any of those MCP servers — it provides bridge hooks and configuration that makes all three work together. All the clever indexing, sandboxing, and symbol extraction is the work of their respective authors.
 
 ## The Problem
 
-If you use [jmunch-claude-code-setup](https://github.com/shacharbard/jmunch-claude-code-setup), Claude Code already enforces jCodeMunch for code files and jDocMunch for doc files. But there's a gap:
+If you use [jmunch-claude-code-setup](https://github.com/shacharbard/jmunch-claude-code-setup), Claude Code already enforces jCodeMunch for code files and jDocMunch for doc files. But there are two gaps:
 
-| File type | What handles it | Token savings |
-|-----------|----------------|---------------|
-| `.py`, `.ts`, `.tsx` | jCodeMunch | ~85-95% |
-| `.md`, `.mdx`, `.rst` | jDocMunch | ~90-95% |
-| **`.json`, `.html` (large)** | **Nothing — full Read** | **0%** |
-| **Bash output (large)** | **Nothing — floods context** | **0%** |
+| What | What handles it | Token savings |
+|------|----------------|---------------|
+| Code files (.py/.ts/.tsx) | jCodeMunch | ~85-95% |
+| Doc files (.md/.mdx/.rst) | jDocMunch | ~90-95% |
+| **Data files (.json/.html, large)** | **Nothing — full Read** | **0%** |
+| **Command outputs (tests, logs, builds)** | **Nothing — floods context** | **0%** |
 
-context-mode fills these gaps with sandboxed execution and FTS5 search — keeping raw data out of the context window entirely.
+context-mode fills both gaps — sandboxed file processing AND command output isolation — keeping raw data out of the context window entirely.
 
 ## What Each Tool Does
 
 - **[jCodeMunch](https://github.com/jgravelle/jcodemunch-mcp)** (by jgravelle) — indexes code (Python, TypeScript, 15 languages) and returns individual functions via AST parsing. You get one function instead of the whole file.
 - **[jDocMunch](https://github.com/jgravelle/jdocmunch-mcp)** (by jgravelle) — indexes docs (.md, .mdx, .rst) and returns specific sections by heading hierarchy. You get one section instead of the whole document.
-- **[context-mode](https://github.com/mksglu/context-mode)** (by mksglu) — sandboxes file reads and command outputs into SQLite with FTS5 search. Raw content stays in the sandbox; only your analysis output enters the context window.
+- **[context-mode](https://github.com/mksglu/context-mode)** (by mksglu) — sandboxes file reads and command outputs into SQLite with FTS5 search. Raw content stays in the sandbox; only your filtered analysis enters the context window.
 
 These are **complementary, not competing** tools:
 
@@ -34,13 +34,13 @@ These are **complementary, not competing** tools:
 | Code symbol navigation (AST) | **Best** | — | — |
 | Doc section navigation (headings) | — | **Best** | — |
 | Large JSON/HTML processing | — | — | **Best** |
-| Bash output sandboxing | — | — | **Best** |
+| Command output isolation | — | — | **Best** |
 | FTS5 search (BM25 ranking) | — | — | **Best** |
 | Session persistence (SQLite) | — | — | **Best** |
 
 ## How It Works
 
-This repo provides one hook — `context-mode-nudge.sh` — that completes the coverage:
+This repo provides **two hooks** that complete the four-tier coverage:
 
 ```
 Read request arrives
@@ -56,9 +56,20 @@ Read request arrives
   |
   └── anything else ?
         └── ALLOWED (direct Read)
+
+Bash command arrives
+  |
+  ├── Small/safe command (git status, ls, mkdir, echo) ?
+  |     └── ALLOWED (direct Bash)
+  |
+  ├── Large-output command (pytest, git log, curl, find, make) ?
+  |     └── context-mode-bash-nudge.sh → BLOCKED, use ctx_execute()
+  |
+  └── Package installs, file redirects, infrastructure ?
+        └── ALLOWED (direct Bash)
 ```
 
-Each hook checks **different file extensions**. No overlaps. No hook ordering issues. No conflicts.
+Each hook checks **different criteria**. No overlaps. No hook ordering issues. No conflicts.
 
 ## Quick Start
 
@@ -69,11 +80,13 @@ Each hook checks **different file extensions**. No overlaps. No hook ordering is
 # Add to ~/.claude/mcp.json under mcpServers:
 #   "context-mode": { "type": "stdio", "command": "npx", "args": ["-y", "context-mode"] }
 
-# 2. Copy the bridge hook
+# 2. Copy both bridge hooks
 cp hooks/context-mode-nudge.sh .claude/hooks/
+cp hooks/context-mode-bash-nudge.sh .claude/hooks/
 chmod +x .claude/hooks/context-mode-nudge.sh
+chmod +x .claude/hooks/context-mode-bash-nudge.sh
 
-# 3. Register the hook (merge into .claude/settings.json Read matcher)
+# 3. Register the hooks (merge into .claude/settings.json)
 # See rules/settings-hook-example.json
 
 # 4. Allow context-mode tools (add to .claude/settings.local.json)
@@ -90,6 +103,7 @@ See [docs/setup-guide.md](docs/setup-guide.md) for the full step-by-step walkthr
 ```
 hooks/
   context-mode-nudge.sh            # PreToolUse:Read — blocks Read on large .json/.html files
+  context-mode-bash-nudge.sh       # PreToolUse:Bash — blocks Bash on large-output commands
 rules/
   global-claude-md.md              # CLAUDE.md rules for ~/.claude/CLAUDE.md
   project-claude-md.md             # CLAUDE.md rules for project CLAUDE.md
@@ -100,7 +114,7 @@ docs/
   setup-guide.md                   # Full step-by-step walkthrough
 ```
 
-## What the Hook Allows Through
+## What the Read Hook Allows Through
 
 The `context-mode-nudge.sh` hook is not a blanket block. It allows:
 
@@ -109,6 +123,29 @@ The `context-mode-nudge.sh` hook is not a blanket block. It allows:
 | `package.json`, `tsconfig.json`, `config.json`, etc. | Small config files — always allowed |
 | Any JSON/HTML under 100 lines | Too small to benefit from sandboxing |
 | Files in `.claude/`, `.vbw-planning/`, `node_modules/` | Config/planning directories |
+
+## What the Bash Hook Allows Through
+
+The `context-mode-bash-nudge.sh` hook allows all small/safe commands:
+
+| Command type | Examples | Why allowed |
+|-------------|----------|-------------|
+| Git state changes | `git add`, `git commit`, `git push` | Side effects, not data output |
+| Git queries (bounded) | `git log -5`, `git diff --stat` | Output is small and bounded |
+| Filesystem | `ls`, `mkdir`, `mv`, `cp`, `chmod` | Predictable small output |
+| Package management | `npm install`, `pip install`, `uv` | Progress output, not data |
+| Build commands | `npm run build`, `npm run lint` | Side effects, not data |
+| File redirects | Any command with `> file` | Output goes to file, not context |
+
+It **blocks** commands with potentially large output:
+
+| Command type | Examples | Why blocked |
+|-------------|----------|-------------|
+| Test suites | `pytest`, `npm test`, `jest`, `vitest` | Test output can be thousands of lines |
+| Unbounded git | `git log`, `git diff` (no limits) | Full history/diff is huge |
+| Recursive search | `find .`, `grep -r`, `rg` | Can return thousands of matches |
+| API calls | `curl`, `wget` | Response bodies can be massive |
+| Verbose builds | `make`, `cargo build`, `tsc` | Compile output can be very long |
 
 ## Important: `FILE_CONTENT` Variable
 
@@ -129,11 +166,13 @@ ctx_execute_file(path="data.json", language="python",
 If you use the jCodeMunch/jDocMunch subagent template from [jmunch-claude-code-setup](https://github.com/shacharbard/jmunch-claude-code-setup), add this block after it:
 
 ```
-**Data file navigation (MANDATORY for large files):** Use context-mode MCP tools for large JSON/HTML files.
+**Command & data navigation (MANDATORY):** Use context-mode MCP tools for large outputs.
+- Test/build/search commands: mcp__context-mode__ctx_execute(language="shell", code="...") instead of Bash
 - Large JSON (>100 lines): mcp__context-mode__ctx_execute_file instead of Read
 - Large HTML: mcp__context-mode__ctx_execute_file instead of Read
 - Pipeline output analysis: mcp__context-mode__ctx_batch_execute with queries parameter
 - ctx_execute_file provides file content as FILE_CONTENT variable — do NOT use open() or sys.argv
+- Bash only for: git status/add/commit/push, ls/mkdir/mv, package installs, file redirects
 ```
 
 ## Why Not Just Use context-mode for Everything?
@@ -162,9 +201,9 @@ context-mode shines where jCodeMunch/jDocMunch have no coverage: JSON, HTML, com
 
 ## License
 
-The hook, rules, and documentation in this repository are licensed under the [MIT License](LICENSE).
+The hooks, rules, and documentation in this repository are licensed under the [MIT License](LICENSE).
 
-This repo does **not** include context-mode, jCodeMunch, or jDocMunch — only configuration and a bridge hook that makes them work together. The MCP servers are separate projects by their respective authors and are subject to their own licenses:
+This repo does **not** include context-mode, jCodeMunch, or jDocMunch — only configuration and bridge hooks that make them work together. The MCP servers are separate projects by their respective authors and are subject to their own licenses:
 - context-mode: [ELv2 (Elastic License v2)](https://github.com/mksglu/context-mode/blob/main/LICENSE)
 - jCodeMunch: see [jcodemunch-mcp](https://github.com/jgravelle/jcodemunch-mcp)
 - jDocMunch: see [jdocmunch-mcp](https://github.com/jgravelle/jdocmunch-mcp)

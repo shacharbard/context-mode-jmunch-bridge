@@ -10,10 +10,10 @@ You should already have jCodeMunch and jDocMunch working. If not, start with [jm
 
 ## Why Add context-mode?
 
-jCodeMunch and jDocMunch save tokens by never requesting full file content — they return individual functions and doc sections. But they don't cover:
+jCodeMunch and jDocMunch save tokens by returning individual code symbols and doc sections. But they don't cover:
 
+- **Command outputs** — test results, git log, build output, API responses flood the context window
 - **Large JSON/HTML files** — pipeline outputs, generated reports, data files
-- **Bash command output** — test results, pipeline runs, log analysis
 - **Session persistence** — surviving context compaction with SQLite event storage
 - **FTS5 search** — searching previous command outputs by relevance (BM25 ranking)
 
@@ -93,23 +93,25 @@ Should return empty. If it shows context-mode hooks, remove them.
 
 ---
 
-## Step 3: Install the Bridge Hook
+## Step 3: Install the Bridge Hooks
 
-Copy `context-mode-nudge.sh` to your project:
+Copy both hooks to your project:
 
 ```bash
 cp hooks/context-mode-nudge.sh .claude/hooks/
+cp hooks/context-mode-bash-nudge.sh .claude/hooks/
 chmod +x .claude/hooks/context-mode-nudge.sh
+chmod +x .claude/hooks/context-mode-bash-nudge.sh
 ```
 
-### What this hook does
+### What each hook does
 
-When Claude tries to `Read` a large JSON or HTML file (100+ lines), the hook blocks the read and tells Claude to use context-mode instead. It gives file-type-specific instructions:
+| Hook | Event | Effect |
+|------|-------|--------|
+| `context-mode-nudge.sh` | PreToolUse:Read | Blocks `Read` on large JSON/HTML files (>100 lines). Redirects to `ctx_execute_file`. |
+| `context-mode-bash-nudge.sh` | PreToolUse:Bash | Blocks `Bash` on commands likely to produce large output (tests, unbounded git log/diff, curl, find, builds). Redirects to `ctx_execute`. |
 
-- **JSON files** → suggests `ctx_execute_file` with `json.loads(FILE_CONTENT)`
-- **HTML files** → suggests `ctx_execute_file` with heading extraction code
-
-### What this hook allows through
+### What `context-mode-nudge.sh` allows through
 
 | File | Reason |
 |------|--------|
@@ -117,36 +119,69 @@ When Claude tries to `Read` a large JSON or HTML file (100+ lines), the hook blo
 | Any JSON/HTML under 100 lines | Too small to benefit from sandboxing |
 | Files in `.claude/`, `.vbw-planning/`, `node_modules/` | Config/planning directories |
 
-### How it coexists with jCodeMunch/jDocMunch hooks
+### What `context-mode-bash-nudge.sh` allows through
 
-Each hook checks **different file extensions** — no overlaps, no conflicts:
+| Command type | Examples |
+|-------------|----------|
+| Git state changes | `git add`, `git commit`, `git push`, `git checkout` |
+| Git queries (bounded) | `git log -5`, `git log --oneline`, `git diff --stat` |
+| Filesystem | `ls`, `mkdir`, `mv`, `cp`, `chmod`, `pwd` |
+| Package management | `npm install`, `pip install`, `uv`, `npx` |
+| Build/lint | `npm run build`, `npm run lint`, `npm run typecheck` |
+| One-liners | `python -c "..."`, `echo`, `date`, `which` |
+| File redirects | Any command with `> file` or `>> file` |
+
+### What `context-mode-bash-nudge.sh` blocks
+
+| Command type | Examples | Why |
+|-------------|----------|-----|
+| Test suites | `pytest`, `npm test`, `jest`, `vitest` | Output can be thousands of lines |
+| Unbounded git | `git log`, `git diff` (no limits) | Full history/diff can be huge |
+| Recursive search | `find .`, `grep -r`, `rg` | Thousands of matches |
+| API calls | `curl`, `wget` | Response bodies can be massive |
+| Verbose builds | `make`, `cargo build`, `tsc` | Compile output can be very long |
+
+### How the hooks coexist with jCodeMunch/jDocMunch
+
+Each hook checks **different criteria** — no overlaps, no conflicts:
 
 ```
-jcodemunch-nudge.sh   -> .py, .ts, .tsx    (code files)
-jdocmunch-nudge.sh    -> .md, .mdx, .rst   (doc files)
-context-mode-nudge.sh -> .json, .html, .htm (data files)
+jcodemunch-nudge.sh        -> .py, .ts, .tsx        (code files)
+jdocmunch-nudge.sh         -> .md, .mdx, .rst       (doc files)
+context-mode-nudge.sh      -> .json, .html, .htm    (data files)
+context-mode-bash-nudge.sh -> large-output commands  (command outputs)
 ```
-
-All three hooks fire on every `Read` call, but only one (at most) will block for any given file.
 
 ---
 
-## Step 4: Register the Hook
+## Step 4: Register the Hooks
 
-Add `context-mode-nudge.sh` to the `Read` matcher in your `.claude/settings.json`:
+Add both hooks to your `.claude/settings.json`:
 
 ```json
 {
-  "matcher": "Read",
-  "hooks": [
-    { "type": "command", "command": "bash .claude/hooks/jcodemunch-nudge.sh" },
-    { "type": "command", "command": "bash .claude/hooks/jdocmunch-nudge.sh" },
-    { "type": "command", "command": "bash .claude/hooks/context-mode-nudge.sh" }
-  ]
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          { "type": "command", "command": "bash .claude/hooks/jcodemunch-nudge.sh" },
+          { "type": "command", "command": "bash .claude/hooks/jdocmunch-nudge.sh" },
+          { "type": "command", "command": "bash .claude/hooks/context-mode-nudge.sh" }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "bash .claude/hooks/context-mode-bash-nudge.sh" }
+        ]
+      }
+    ]
+  }
 }
 ```
 
-> See `rules/settings-hook-example.json` for the full example.
+> See `rules/settings-hook-example.json` for the full example. **Merge** with your existing hooks — don't replace them.
 
 ---
 
@@ -182,7 +217,7 @@ Append the contents of `rules/global-claude-md.md` to your `~/.claude/CLAUDE.md`
 
 Append the contents of `rules/project-claude-md.md` to your project's `CLAUDE.md`.
 
-> The key rule: "Code → jCodeMunch, Docs → jDocMunch, Data → context-mode."
+> The key rule: "Code → jCodeMunch, Docs → jDocMunch, Data files → ctx_execute_file, Command outputs → ctx_execute."
 
 ---
 
@@ -191,39 +226,51 @@ Append the contents of `rules/project-claude-md.md` to your project's `CLAUDE.md
 If you use the jCodeMunch/jDocMunch subagent instruction template from [jmunch-claude-code-setup](https://github.com/shacharbard/jmunch-claude-code-setup), add this block after it:
 
 ```
-**Data file navigation (MANDATORY for large files):** Use context-mode MCP tools for large JSON/HTML files.
+**Command & data navigation (MANDATORY):** Use context-mode MCP tools for large outputs.
+- Test/build/search commands: mcp__context-mode__ctx_execute(language="shell", code="...") instead of Bash
 - Large JSON (>100 lines): mcp__context-mode__ctx_execute_file instead of Read
 - Large HTML: mcp__context-mode__ctx_execute_file instead of Read
 - Pipeline output analysis: mcp__context-mode__ctx_batch_execute with queries parameter
 - ctx_execute_file provides file content as FILE_CONTENT variable — do NOT use open() or sys.argv
+- Bash only for: git status/add/commit/push, ls/mkdir/mv, package installs, file redirects
 ```
 
 ---
 
 ## Step 8: Verify the Integration
 
-### Test 1: Small config JSON (should be allowed)
+### Test 1: Small config JSON (should be allowed through Read)
 
 Ask Claude to read `package.json`. The hook should let it through.
 
-### Test 2: Large JSON (should be blocked)
+### Test 2: Large JSON (should be blocked from Read)
 
 Ask Claude to read a JSON file with 100+ lines. The hook should block with context-mode instructions.
 
-### Test 3: jCodeMunch still works
+### Test 3: Small Bash command (should be allowed)
+
+Ask Claude to run `git status`. Should execute normally via Bash.
+
+### Test 4: Large-output Bash command (should be blocked)
+
+Ask Claude to run `pytest`. The hook should block and redirect to `ctx_execute`.
+
+### Test 5: jCodeMunch still works
 
 Ask Claude to read a `.py` file. The jCodeMunch hook should fire, not the context-mode hook.
 
-### Test 4: context-mode tools work
+### Test 6: context-mode tools work
 
 Ask Claude to run:
 ```
 ctx_execute(language="python", code="print('hello from sandbox')")
 ```
 
-### Run the automated test
+### Run the automated tests
 
 ```bash
+# ── Read hook tests ──
+
 # Allow cases
 echo '{"file_path":"package.json"}' | bash .claude/hooks/context-mode-nudge.sh >/dev/null 2>&1
 echo "package.json: exit $?"
@@ -240,6 +287,34 @@ python3 -c "import json; json.dump([{'id':i} for i in range(200)], open('$TMPJSO
 echo '{"file_path":"'$TMPJSON'"}' | bash .claude/hooks/context-mode-nudge.sh >/dev/null 2>&1
 echo "Large JSON: exit $?"
 rm "$TMPJSON"
+
+# ── Bash hook tests ──
+
+# Allow cases
+echo '{"tool_input":{"command":"git status"}}' | bash .claude/hooks/context-mode-bash-nudge.sh >/dev/null 2>&1
+echo "git status: exit $?"
+
+echo '{"tool_input":{"command":"ls -la"}}' | bash .claude/hooks/context-mode-bash-nudge.sh >/dev/null 2>&1
+echo "ls -la: exit $?"
+
+echo '{"tool_input":{"command":"git log -5"}}' | bash .claude/hooks/context-mode-bash-nudge.sh >/dev/null 2>&1
+echo "git log -5: exit $?"
+
+echo '{"tool_input":{"command":"npm install"}}' | bash .claude/hooks/context-mode-bash-nudge.sh >/dev/null 2>&1
+echo "npm install: exit $?"
+
+# Block cases
+echo '{"tool_input":{"command":"pytest tests/"}}' | bash .claude/hooks/context-mode-bash-nudge.sh >/dev/null 2>&1
+echo "pytest: exit $?"
+
+echo '{"tool_input":{"command":"git log"}}' | bash .claude/hooks/context-mode-bash-nudge.sh >/dev/null 2>&1
+echo "git log: exit $?"
+
+echo '{"tool_input":{"command":"curl https://api.example.com/data"}}' | bash .claude/hooks/context-mode-bash-nudge.sh >/dev/null 2>&1
+echo "curl: exit $?"
+
+echo '{"tool_input":{"command":"find . -name *.py"}}' | bash .claude/hooks/context-mode-bash-nudge.sh >/dev/null 2>&1
+echo "find: exit $?"
 ```
 
 Expected output:
@@ -248,6 +323,14 @@ package.json: exit 0
 tsconfig.node.json: exit 0
 pipeline.py: exit 0
 Large JSON: exit 2
+git status: exit 0
+ls -la: exit 0
+git log -5: exit 0
+npm install: exit 0
+pytest: exit 2
+git log: exit 2
+curl: exit 2
+find: exit 2
 ```
 
 ---
@@ -258,7 +341,7 @@ These are the tools context-mode provides. All tool names are prefixed with `mcp
 
 | Tool | Parameters | Purpose |
 |------|-----------|---------|
-| `ctx_execute` | `language` (required), `code` (required), `timeout`, `intent` | Run code in sandbox (11 languages) |
+| `ctx_execute` | `language` (required), `code` (required), `timeout`, `intent` | Run code/commands in sandbox (11 languages including shell) |
 | `ctx_execute_file` | `path` (required), `language` (required), `code` (required), `timeout`, `intent` | Process a file in sandbox — content available as `FILE_CONTENT` |
 | `ctx_index` | `content` OR `path`, `source` | Index text/file into FTS5 for later search |
 | `ctx_search` | `queries` (array), `limit`, `source` | Search indexed content with BM25 ranking |
@@ -282,31 +365,50 @@ ctx_execute_file(path="data.json", language="python",
   code="import json; data=json.load(open('data.json')); print(len(data))")
 ```
 
+### Important: `ctx_execute` for shell commands
+
+When using `ctx_execute` for shell commands, use `language="shell"`:
+
+```python
+# Run a test suite — output stays sandboxed
+ctx_execute(language="shell", code="pytest tests/ -v")
+
+# Unbounded git log — only filtered results enter context
+ctx_execute(language="shell", code="git log --all")
+
+# API call — response stays in sandbox
+ctx_execute(language="shell", code="curl -s https://api.example.com/data")
+```
+
 ---
 
-## How the Three Tools Divide the Work
+## How the Four Tools Divide the Work
 
 ```
-Read request arrives
-  |
-  ├── .py / .ts / .tsx ?
-  |     └── jcodemunch-nudge.sh → BLOCKED, use get_symbol()
-  |
-  ├── .md / .mdx / .rst (large) ?
-  |     └── jdocmunch-nudge.sh → BLOCKED, use search_sections()
-  |
-  ├── .json / .html (large) ?
-  |     └── context-mode-nudge.sh → BLOCKED, use ctx_execute_file()
-  |
-  └── anything else ?
-        └── ALLOWED (direct Read)
+                    ┌─────────────────────┐
+                    │   Claude Code        │
+                    └─────────┬───────────┘
+                              │
+            ┌─────────────────┼─────────────────┐
+            │                 │                 │
+      Read request      Bash command      Other tools
+            │                 │                 │
+    ┌───────┼───────┐   ┌─────┼─────┐          │
+    │       │       │   │           │          │
+  .py/ts  .md/rst  .json  Small    Large      OK
+    │       │    .html   cmd     output
+    │       │       │     │         │
+    ▼       ▼       ▼     ▼         ▼
+ jCode   jDoc   ctx_     Bash   ctx_
+ Munch   Munch  execute         execute
+                _file           (shell)
 ```
 
 No gaps. No conflicts. Each tool handles what it's best at:
 
 - **jCodeMunch** — AST-level code navigation (returns one function, ~10-50 lines)
 - **jDocMunch** — heading-level doc navigation (returns one section)
-- **context-mode** — sandboxed data file processing + output compression + session persistence
+- **context-mode** — sandboxed command execution + data file processing + FTS5 search
 
 ---
 
@@ -323,6 +425,12 @@ export CONTEXT_MODE_HOOKS_DISABLED=true
 
 **Large JSON being allowed through (not blocked)**
 The hook checks line count (`wc -l`). Single-line JSON (minified) will pass through since it's under 100 lines. If your pipeline produces minified JSON, adjust the threshold or add a file-size check.
+
+**Bash command incorrectly blocked**
+Add the command pattern to the "ALWAYS ALLOW" section of `context-mode-bash-nudge.sh`. The allowlist uses `case` pattern matching — add a new pattern like `"your-command"*) exit 0 ;;`.
+
+**Bash command not blocked when it should be**
+Add a new detection pattern in the "BLOCK" section of `context-mode-bash-nudge.sh`. Set a new `IS_*` variable and add it to the final check.
 
 **Hook blocks a file you need to edit**
 Add the filename to the allowlist in `context-mode-nudge.sh` (the `BASENAME` check near line 20). Or use Read with a specific line range (`offset` and `limit` parameters) which bypasses the hook.
