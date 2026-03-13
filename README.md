@@ -98,12 +98,66 @@ chmod +x .claude/hooks/context-mode-bash-nudge.sh
 
 See [docs/setup-guide.md](docs/setup-guide.md) for the full step-by-step walkthrough.
 
+## Token Savings Tracking
+
+context-mode does not natively report token savings. This repo includes a **PostToolUse hook** that measures genuine savings using an output-size proxy:
+
+- For `ctx_execute_file`: compares actual file size vs. what entered context
+- For `ctx_execute` (shell): compares a conservative baseline (~56KB) vs. output
+- For `ctx_batch_execute`: compares ~240KB baseline vs. output
+- For `ctx_fetch_and_index`: compares ~32KB baseline vs. output
+
+Only genuine replacement tools are tracked (tools that replace a Read or Bash call). Utility tools like `ctx_stats`, `ctx_index`, and `ctx_search` are excluded.
+
+### How it works
+
+```
+ctx_execute("pytest tests/")
+  → Full output: ~56KB (stays in sandbox)
+  → Filtered output entering context: ~2KB
+  → Tokens saved: ~13,500
+
+ctx_execute_file("data.json", ...)
+  → File size: 180KB
+  → Summary entering context: ~500 bytes
+  → Tokens saved: ~44,875
+```
+
+Savings accumulate in `~/.code-index/_genuine_savings_ctx.json`:
+
+```json
+{
+  "total_genuine_tokens_saved": 58375,
+  "by_tool": {
+    "mcp__context-mode__ctx_execute": 13500,
+    "mcp__context-mode__ctx_execute_file": 44875
+  },
+  "call_counts": {
+    "mcp__context-mode__ctx_execute": 3,
+    "mcp__context-mode__ctx_execute_file": 2
+  }
+}
+```
+
+### Statusline integration
+
+If you use the jmunch-claude-code-setup statusline, it displays savings as split counters:
+
+```
+Claude Opus 4 │ JCM:920.376K JDM:2.108K CTX:58.375K │ leaflet-analysis
+```
+
+- **JCM** — jCodeMunch savings (code files)
+- **JDM** — jDocMunch savings (doc files)
+- **CTX** — context-mode savings (data files + command outputs)
+
 ## Repository Structure
 
 ```
 hooks/
   context-mode-nudge.sh            # PreToolUse:Read — blocks Read on large .json/.html files
   context-mode-bash-nudge.sh       # PreToolUse:Bash — blocks Bash on large-output commands
+  track-genuine-savings-ctx.sh     # PostToolUse — tracks token savings from context-mode
 rules/
   global-claude-md.md              # CLAUDE.md rules for ~/.claude/CLAUDE.md
   project-claude-md.md             # CLAUDE.md rules for project CLAUDE.md

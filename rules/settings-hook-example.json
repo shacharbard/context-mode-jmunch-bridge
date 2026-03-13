@@ -1,5 +1,5 @@
 {
-  "_comment": "Add these hooks to your .claude/settings.json. The Read matcher adds context-mode-nudge.sh alongside jCodeMunch/jDocMunch hooks. The Bash matcher adds context-mode-bash-nudge.sh to redirect large-output commands.",
+  "_comment": "Add these hooks to your .claude/settings.json. PreToolUse hooks enforce routing. PostToolUse tracks genuine token savings.",
   "hooks": {
     "PreToolUse": [
       {
@@ -29,6 +29,18 @@
             "_comment": "context-mode Bash hook (this repo) — blocks large-output commands",
             "type": "command",
             "command": "bash .claude/hooks/context-mode-bash-nudge.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__context-mode__*",
+        "hooks": [
+          {
+            "_comment": "context-mode savings tracker (this repo)",
+            "type": "command",
+            "command": "bash .claude/hooks/track-genuine-savings-ctx.sh"
           }
         ]
       }

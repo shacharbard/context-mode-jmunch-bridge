@@ -412,6 +412,77 @@ No gaps. No conflicts. Each tool handles what it's best at:
 
 ---
 
+## Step 9: Token Savings Tracking (Optional)
+
+context-mode doesn't natively report token savings. This repo includes a PostToolUse hook that tracks genuine savings using an output-size proxy.
+
+### Install the savings tracker
+
+```bash
+cp hooks/track-genuine-savings-ctx.sh .claude/hooks/
+chmod +x .claude/hooks/track-genuine-savings-ctx.sh
+```
+
+### Register the PostToolUse hook
+
+Add to `.claude/settings.json` under `hooks.PostToolUse`:
+
+```json
+{
+  "matcher": "mcp__context-mode__*",
+  "hooks": [
+    {
+      "type": "command",
+      "command": "bash .claude/hooks/track-genuine-savings-ctx.sh"
+    }
+  ]
+}
+```
+
+> See `rules/settings-hook-example.json` for the full example including both PreToolUse and PostToolUse hooks.
+
+### What it tracks
+
+The hook only counts **genuine** tools — those that replace a Read or Bash call:
+
+| Tool | Baseline | What it replaces |
+|------|----------|-----------------|
+| `ctx_execute` (shell) | ~56KB (14K tokens) | Bash with large output |
+| `ctx_execute_file` | Actual file size | Read on large JSON/HTML |
+| `ctx_batch_execute` | ~240KB (60K tokens) | Multiple Bash calls |
+| `ctx_fetch_and_index` | ~32KB (8K tokens) | WebFetch + Read |
+
+Non-shell `ctx_execute` calls (Python one-liners, etc.) and utility tools (`ctx_stats`, `ctx_index`, `ctx_search`) are excluded.
+
+### Where savings are stored
+
+Savings accumulate in `~/.code-index/_genuine_savings_ctx.json`:
+
+```json
+{
+  "total_genuine_tokens_saved": 58375,
+  "by_tool": {
+    "mcp__context-mode__ctx_execute": 13500,
+    "mcp__context-mode__ctx_execute_file": 44875
+  },
+  "call_counts": {
+    "mcp__context-mode__ctx_execute": 3,
+    "mcp__context-mode__ctx_execute_file": 2
+  }
+}
+```
+
+### Statusline display
+
+If you use the [jmunch-claude-code-setup](https://github.com/shacharbard/jmunch-claude-code-setup) statusline, update `statusline.js` to read this file and display `CTX:58.375K` alongside `JCM:` and `JDM:` counters.
+
+### Requires
+
+- `python3` (the hook uses an inline Python script for JSON processing)
+- `~/.code-index/` directory (created automatically on first run)
+
+---
+
 ## Troubleshooting
 
 **"Tool not found" errors for context-mode**
