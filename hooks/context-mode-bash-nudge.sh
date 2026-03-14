@@ -3,10 +3,10 @@
 # Exit 2 = block with instruction to use ctx_execute
 # Exit 0 = allow (small/simple commands)
 #
-# This hook completes the four-tier token savings:
-#   jcodemunch-nudge.sh        -> blocks Read on .py/.ts/.tsx (use get_symbol)
-#   jdocmunch-nudge.sh         -> blocks Read on large .md (use get_section)
-#   context-mode-nudge.sh      -> blocks Read on large .json/.html (use ctx_execute_file)
+# This hook completes the three-tier token savings:
+#   jcodemunch-nudge.sh      -> blocks Read on .py/.ts/.tsx (use get_symbol)
+#   jdocmunch-nudge.sh       -> blocks Read on large .md (use get_section)
+#   context-mode-nudge.sh    -> blocks Read on large .json/.html (use ctx_execute_file)
 #   context-mode-bash-nudge.sh -> blocks Bash on large-output commands (use ctx_execute)
 
 INPUT=$(cat)
@@ -57,7 +57,9 @@ esac
 # Allow commands that write files (build, compile) — output is side effect, not data
 case "$CMD" in
   "npm run build"*|"npm run lint"*|"npm run typecheck"*) exit 0 ;;
-  "python"*"-c "*) exit 0 ;;  # Inline python one-liners are usually small
+  "python"*"-c "*|"python3"*"-c "*) exit 0 ;;  # Inline python one-liners are usually small
+  "python"*"-m pip"*|"python3"*"-m pip"*) exit 0 ;;  # Package management
+  "python"*"-m json.tool"*|"python3"*"-m json.tool"*) exit 0 ;;  # Small utility
 esac
 
 # Allow any command with output redirected to a file (> or >>)
@@ -65,7 +67,7 @@ case "$CMD" in
   *" > "*|*" >> "*) exit 0 ;;
 esac
 
-# Allow sentinel/infrastructure commands
+# Allow HASH/sentinel creation commands (our own infrastructure)
 case "$CMD" in
   *"jmunch-ready"*|*"jmunch-session"*|*"md5"*) exit 0 ;;
 esac
@@ -87,7 +89,7 @@ case "$CMD" in
   *"git diff"*) IS_GIT_LARGE=1 ;;  # Full diff can be huge
 esac
 
-# find/grep without limits (catch shell usage)
+# find/grep without limits (already handled by Grep tool, but catch shell usage)
 IS_SEARCH=""
 case "$CMD" in
   "find "*|"grep -r"*|"grep -R"*|"rg "*) IS_SEARCH=1 ;;
@@ -106,22 +108,38 @@ case "$CMD" in
   *"make "*|*"cargo build"*|*"tsc "*) IS_BUILD=1 ;;
 esac
 
+# Python scripts (running .py files — output can be large)
+# Safe patterns (inline -c, -m pip, -m json.tool, output redirected) already exit 0 above
+IS_PYTHON_SCRIPT=""
+case "$CMD" in
+  "python "*.py*|"python3 "*.py*) IS_PYTHON_SCRIPT=1 ;;
+  "python scripts/"*|"python3 scripts/"*) IS_PYTHON_SCRIPT=1 ;;
+esac
+
 # If none of the large-output patterns matched, allow
-if [ -z "$IS_TEST" ] && [ -z "$IS_GIT_LARGE" ] && [ -z "$IS_SEARCH" ] && [ -z "$IS_FETCH" ] && [ -z "$IS_BUILD" ]; then
+if [ -z "$IS_TEST" ] && [ -z "$IS_GIT_LARGE" ] && [ -z "$IS_SEARCH" ] && [ -z "$IS_FETCH" ] && [ -z "$IS_BUILD" ] && [ -z "$IS_PYTHON_SCRIPT" ]; then
   exit 0
 fi
 
 # Build the redirect message
 if [ -n "$IS_TEST" ]; then
   REASON="Test suite output can be very large"
+  EXAMPLE="ctx_execute(language=\"shell\", code=\"$CMD\")"
 elif [ -n "$IS_GIT_LARGE" ]; then
   REASON="Unbounded git log/diff can produce thousands of lines"
+  EXAMPLE="ctx_execute(language=\"shell\", code=\"$CMD\")"
 elif [ -n "$IS_SEARCH" ]; then
   REASON="Recursive search can return thousands of matches"
+  EXAMPLE="ctx_execute(language=\"shell\", code=\"$CMD\")"
 elif [ -n "$IS_FETCH" ]; then
   REASON="API/web responses can be very large"
+  EXAMPLE="ctx_execute(language=\"shell\", code=\"$CMD\")"
 elif [ -n "$IS_BUILD" ]; then
   REASON="Build output can be verbose"
+  EXAMPLE="ctx_execute(language=\"shell\", code=\"$CMD\")"
+elif [ -n "$IS_PYTHON_SCRIPT" ]; then
+  REASON="Python script output can be large"
+  EXAMPLE="ctx_execute(language=\"shell\", code=\"$CMD\")"
 fi
 
 cat <<EOF
