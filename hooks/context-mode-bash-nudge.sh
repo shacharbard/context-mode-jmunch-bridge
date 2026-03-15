@@ -121,32 +121,34 @@ if [ -z "$IS_TEST" ] && [ -z "$IS_GIT_LARGE" ] && [ -z "$IS_SEARCH" ] && [ -z "$
   exit 0
 fi
 
+# Capture project root for cd prefix (ctx_execute runs in a temp sandbox)
+PROJECT_ROOT="$(pwd)"
+
 # Build the redirect message
 if [ -n "$IS_TEST" ]; then
   REASON="Test suite output can be very large"
-  EXAMPLE="ctx_execute(language=\"shell\", code=\"$CMD\")"
 elif [ -n "$IS_GIT_LARGE" ]; then
   REASON="Unbounded git log/diff can produce thousands of lines"
-  EXAMPLE="ctx_execute(language=\"shell\", code=\"$CMD\")"
 elif [ -n "$IS_SEARCH" ]; then
   REASON="Recursive search can return thousands of matches"
-  EXAMPLE="ctx_execute(language=\"shell\", code=\"$CMD\")"
 elif [ -n "$IS_FETCH" ]; then
   REASON="API/web responses can be very large"
-  EXAMPLE="ctx_execute(language=\"shell\", code=\"$CMD\")"
 elif [ -n "$IS_BUILD" ]; then
   REASON="Build output can be verbose"
-  EXAMPLE="ctx_execute(language=\"shell\", code=\"$CMD\")"
 elif [ -n "$IS_PYTHON_SCRIPT" ]; then
   REASON="Python script output can be large"
-  EXAMPLE="ctx_execute(language=\"shell\", code=\"$CMD\")"
 fi
 
 cat <<EOF
 BLOCKED: $REASON. Use context-mode ctx_execute instead of Bash to keep large output out of conversation context.
 
+IMPORTANT: ctx_execute runs in a temp sandbox, so you MUST cd to the project root first.
+
 Instead of Bash, run:
-  mcp__context-mode__ctx_execute(language="shell", code="$CMD")
+  mcp__context-mode__ctx_execute(language="shell", code="cd $PROJECT_ROOT && $CMD")
+
+For Python scripts, prefix with os.chdir:
+  mcp__context-mode__ctx_execute(language="python", code="import os; os.chdir('$PROJECT_ROOT')\n...")
 
 This executes the command in a sandbox — only filtered stdout enters your context window (98% token savings on large outputs).
 

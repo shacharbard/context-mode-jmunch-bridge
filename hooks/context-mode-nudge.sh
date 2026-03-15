@@ -49,19 +49,27 @@ if [[ "$FILE_PATH" == *.json || "$FILE_PATH" == *.html || "$FILE_PATH" == *.htm 
     fi
   fi
 
-  # Build file-type-specific instructions
+  # Resolve absolute path for ctx_execute_file (runs in temp sandbox)
+  if [[ "$FILE_PATH" = /* ]]; then
+    ABS_PATH="$FILE_PATH"
+  else
+    ABS_PATH="$(pwd)/$FILE_PATH"
+  fi
+
+  # Build file-type-specific instructions with absolute paths
   # NOTE: ctx_execute_file injects file content as FILE_CONTENT variable (not sys.argv)
   EXT="${BASENAME##*.}"
   if [[ "$EXT" == "json" ]]; then
-    SUMMARY_HINT="Summarize: ctx_execute_file(path=\"$FILE_PATH\", language=\"python\", code=\"import json; data=json.loads(FILE_CONTENT); print(type(data).__name__, len(data) if isinstance(data,(list,dict)) else '?', 'entries'); print(json.dumps(data,indent=2)[:3000])\")"
+    SUMMARY_HINT="Summarize: ctx_execute_file(path=\"$ABS_PATH\", language=\"python\", code=\"import json; data=json.loads(FILE_CONTENT); print(type(data).__name__, len(data) if isinstance(data,(list,dict)) else '?', 'entries'); print(json.dumps(data,indent=2)[:3000])\")"
   else
-    SUMMARY_HINT="Summarize: ctx_execute_file(path=\"$FILE_PATH\", language=\"python\", code=\"import re; print(f'HTML: {len(FILE_CONTENT)} chars, {FILE_CONTENT.count(chr(10))} lines'); titles=re.findall(r'<(h[1-3])[^>]*>(.*?)</\\\\1>',FILE_CONTENT,re.I|re.S); [print(t[0],t[1].strip()[:80]) for t in titles[:20]]\")"
+    SUMMARY_HINT="Summarize: ctx_execute_file(path=\"$ABS_PATH\", language=\"python\", code=\"import re; print(f'HTML: {len(FILE_CONTENT)} chars, {FILE_CONTENT.count(chr(10))} lines'); titles=re.findall(r'<(h[1-3])[^>]*>(.*?)</\\\\1>',FILE_CONTENT,re.I|re.S); [print(t[0],t[1].strip()[:80]) for t in titles[:20]]\")"
   fi
 
   # Block with instruction to use context-mode
   echo "BLOCKED: Large $EXT file (${LINE_COUNT:-?} lines). Use context-mode instead of Read for '$BASENAME'.
+  IMPORTANT: ctx_execute runs in a temp sandbox — always use ABSOLUTE paths.
   - $SUMMARY_HINT
-  - Index by path: ctx_index(path=\"$FILE_PATH\", source=\"$BASENAME\")
+  - Index by path: ctx_index(path=\"$ABS_PATH\", source=\"$BASENAME\")
   - Then search: ctx_search(queries=[\"your search terms\"])
   - Read is allowed for: config files (package.json, tsconfig.json), small files (<100 lines)"
   exit 2
