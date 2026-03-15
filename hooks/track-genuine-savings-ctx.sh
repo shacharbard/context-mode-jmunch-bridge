@@ -106,6 +106,19 @@ data['call_counts'] = calls
 
 with open(savings_file, 'w') as f:
     json.dump(data, f, indent=2)
+
+# Append to JSONL history log (one line per savings event)
+import datetime
+log_file = os.path.expanduser(os.environ.get('HOME', '~') + '/.code-index/_genuine_savings_ctx_history.jsonl')
+entry = {
+    'ts': datetime.datetime.utcnow().isoformat() + 'Z',
+    'agent': os.environ.get('CLAUDE_AGENT_NAME', ''),
+    'tool': tool_name,
+    'tokens_saved': tokens_saved,
+    'cumulative': data['total_genuine_tokens_saved'],
+}
+with open(log_file, 'a') as f:
+    f.write(json.dumps(entry) + '\n')
 " <<< "$INPUT"
 
 exit 0
